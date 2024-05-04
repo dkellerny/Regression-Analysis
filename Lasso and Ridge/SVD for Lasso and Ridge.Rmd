@@ -1,0 +1,182 @@
+---
+author: "Daniel Keller"
+date: "2024-04-13"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  word_document: default
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhf{}
+- \rhead{{Daniel Keller}}
+- \lhead{MA 575}
+- \renewcommand{\headrulewidth}{0.4mm}
+---
+
+\begin{center}
+\textbf{\large{Singular Value Decomposition for Lasso and Ridge Regression}}
+\end{center}
+
+__Problem 1__
+
+a) To show that the condition number of the modified matrix is shifted, we start by observing that since $\textbf{X}' \textbf{X}$ is square and symmetric, we can write it using SVD, where the diagonal matrix $\textbf{D}$ contains the eigenvalues of $\textbf{X}'\textbf{X}$. Then, solving for the eigenvalues of $\textbf{X}' \textbf{X} + \lambda \textbf{I}$ we get
+\begin{align*} 
+\textbf{X}' \textbf{X} + \lambda \textbf{I} &= \textbf{VDV}' + \lambda \textbf{I} \\
+&= \textbf{V}(\textbf{D}+\lambda \textbf{I})\textbf{V}' \\
+&= \textbf{V} \begin{bmatrix}
+\lambda_1 + \lambda & & & \\
+& \lambda_2 + \lambda& & \\
+& & \ddots & \\
+& & & \lambda_{p+1} + \lambda
+\end{bmatrix}\textbf{V}' .
+\end{align*}
+
+   We observe now that the eigenvalues of $\textbf{X}' \textbf{X} + \lambda \textbf{I}$ are simply the eigenvalues of $\textbf{X}' \textbf{X}$ shifted by $\lambda.$ Therefore, the condition number $\textbf{X}' \textbf{X} + \lambda \textbf{I}$ is 
+$$ \kappa(\textbf{X}' \textbf{X} + \lambda \textbf{I} ) = \frac{\lambda_1(\textbf{X}' \textbf{X})+ \lambda}{\lambda_{p+1}(\textbf{X}' \textbf{X} ) + \lambda}.$$
+
+b)
+
+```{r, message=FALSE}
+# Load necessary libraries
+library(tidyverse)
+library(Matrix)
+library(pracma)
+library(glmnet)
+```
+```{r, message = FALSE}
+# Read the dataset
+bikedata <- read_csv("reducedbikedata2011.csv")
+bikedata <- na.omit(bikedata)
+
+# Prepare the data matrix X for OLS regression
+predictor_columns <- setdiff(names(bikedata), c('Unnamed: 0', 'X', '...1'))
+X_ols <- bikedata %>%
+  select(all_of(predictor_columns)) %>%
+  add_column(intercept = 1, .before = 1)
+
+X_ols <- data.frame(lapply(X_ols, function(x) as.numeric(as.character(x))))
+X_ols_matrix <- as.matrix(X_ols)
+```
+b) \textit{i)} When the condition number is near $0$, $\textbf{X}'\textbf{X} + \lambda \mathbf{I}$ is very unstable, as the maximum eigenvalue is much larger than the minimum eigenvalue. As $\lambda \to \infty,$ we notice that the condition number approaches one, indicating the minimum and maximum eigenvalues are near equal. When the minimum and maximum eigenvalues are near equal, the matrix is much easier to invert, and is there for more stable.  
+```{r, out.width="50%"}
+calc_condition_number <- function(lambda, eigenvalues_XtX) {
+  lambda_1 <- max(eigenvalues_XtX)
+  lambda_m <- min(eigenvalues_XtX)
+  condition_number <- (lambda_1 + lambda) / (lambda_m + lambda)
+  return(condition_number)
+}
+
+XtX <- t(X_ols_matrix) %*% X_ols_matrix
+eigenvalues_XtX <- eigen(XtX, only.values = TRUE)$values
+lambda_sequence <- 10^seq(0, 13, length.out = 1000)
+condition_numbers <- numeric(length(lambda_sequence))
+
+for(i in seq_along(lambda_sequence)) {
+  condition_numbers[i] <- calc_condition_number(lambda_sequence[i], eigenvalues_XtX)
+}
+
+plot(lambda_sequence, condition_numbers, log = "xy", type = "l", 
+     xlab = expression(lambda), ylab = "Condition Number", 
+     main = "Log-Log Plot of Condition Number vs Lambda")
+```
+
+b) \textit{ii)} From the formula for the fitted values in ridge regression
+
+$$\hat{\textbf{Y}}_{R} = \sum_{i=0}^p \frac{\sigma_i^2}{\sigma_i^2 + \lambda}(\textbf{u}_i'\textbf{Y})\textbf{u}_i, $$ 
+
+   we observe that as $\lambda \to \infty$, the fitted values for the regression approach 0, which is likely not     reasonable. Therefore, it is not reasonable to use a very large $\lambda$ for ridge regression. On the other      hand, small lambda values near $0$ give the same fitted values as those obtained from fitting a traditional       least squares model. A balance is to be achieved between the two, as to not the defeat the purpose of using       ridge over regular least squares. 
+   
+__Problem 2__
+
+a) 
+
+```{r}
+# Load in data
+swiss <- datasets::swiss
+summary(swiss)
+x <- model.matrix(Fertility~., swiss)[,-1]
+y <- swiss$Fertility
+lambda <- 10^seq(10, -2, length = 100)
+
+# Form train and test sets
+set.seed(489)
+train = sample(1:nrow(x), nrow(x)/2)
+test = (-train)
+ytest = y[test]
+```
+
+b)
+
+```{r}
+train_indices <- sample(1:nrow(x), nrow(x)/2)
+test_indices <- setdiff(1:nrow(x), train_indices)
+x_train <- x[train_indices, ]
+y_train <- y[train_indices]
+x_test <- x[test_indices, ]
+y_test <- y[test_indices]
+
+# run OLS model on training data
+ols_model <- lm(Fertility ~ ., data = swiss, subset=train_indices)
+summary(ols_model)
+```
+
+c) 
+
+```{r}
+ridge_model <- glmnet(x_train, y_train, alpha=0, lambda=lambda)
+print(ridge_model)
+```
+
+d) The best $\lambda$ found via ridge regression is $3.10569,$ leading to an MSE near $100$.
+
+```{r, out.width="50%", message=FALSE}
+cv_out <- cv.glmnet(x_train, y_train, alpha = 0)
+cv_out$lambda.min
+plot(cv_out)
+```
+
+e) Using the best $\lambda$ from cross-validation ridge model, we find that the MSE values are $45.04$ and $44.19$ for the OLS and ridge models, respectively.
+
+
+```{r}
+# OLS prediction
+pred_ols <- predict(ols_model, newdata = swiss[test_indices,])
+mse_ols <- mean((y_test - pred_ols)^2)
+
+# ridge prediction 
+optimal_lambda_ridge <- cv_out$lambda.min
+pred_ridge <- predict(ridge_model, s = optimal_lambda_ridge, newx = as.matrix(x_test))
+mse_ridge <- mean((y_test - pred_ridge)^2)
+
+list(MSE_OLS = mse_ols, MSE_Ridge = mse_ridge)
+```
+
+f) The best $\lambda$ for the lasso model is $0.8248985,$ leading to a predicted MSE of $48.39$ on the testing data. 
+
+```{r, out.width="50%", message=FALSE}
+lasso_model <- glmnet(x_train, y_train, alpha=1, lambda=lambda)
+print(lasso_model)
+
+cv_out_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
+print(cv_out_lasso$lambda.min)
+plot(cv_out_lasso)
+optimal_lambda_lasso <- cv_out_lasso$lambda.min
+pred_lasso <- predict(lasso_model, s = optimal_lambda_lasso, newx = as.matrix(x_test))
+mse_lasso <- mean((y_test - pred_lasso)^2)
+list(MSE_OLS = mse_ols, MSE_Ridge = mse_ridge, MSE_Lasso = mse_lasso)
+
+# OLS coefficients
+summary(ols_model)
+# ridge coefficients
+print(coef(cv_out, s = optimal_lambda_ridge))
+# lasso coefficients
+print(coef(cv_out_lasso, s = optimal_lambda_lasso))
+```
+
+g) We find that the model with the best predicted MSE on the testing data is the ridge model MSE $=44.1905$. The optimal constraint parameter ridge regression was found through cross-validation to be $\lambda_R = 2.829789$, lower than the optimal lambda found through cross validation for lasso, $\lambda_L = 0.8248985$. We find that the OLS coefficients are all within $(\text{-}2,2),$ except for the intercept of $57.61010.$ For ridge, the coefficients are also all within $(\text{-}2,2),$ except for the intercept of $52.83218.$ For lasso, the coefficients are all within $(\text{-}2,2),$ where notably the coefficient for Agriculture has been shrunk to $0$, meaning it that data is no longer used in the model. This is unique to lasso and not possible in ridge, the counter equivalent in OLS being an insignificant t-test, even though the causes are different. Since ridge uses the L2 norm, it can shrink coefficients close to $0$, but never actually to be equal to $0.$ Nonetheless, we find that the coefficients between the three models are generally quite similar and lead to similar predicted MSE values on the test set.
+
+
+
+
+
